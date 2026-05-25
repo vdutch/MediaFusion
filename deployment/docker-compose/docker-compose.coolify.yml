@@ -1,0 +1,164 @@
+services:
+  # Coolify should proxy this service to the public domain.
+  # Do not add host port mappings here; container port 8000 stays internal.
+  mediafusion-api:
+    image: "${MEDIAFUSION_IMAGE:-mhdzumair/mediafusion:6.0.0-beta.12}"
+    expose:
+      - "8000"
+    environment:
+      STREAM_RS_PORT: "8000"
+      HOST_URL: "${HOST_URL:?https://mediafusion.example.com}"
+      POSTER_HOST_URL: "${POSTER_HOST_URL:-https://mediafusion.example.com}"
+      CONTACT_EMAIL: "${CONTACT_EMAIL:-admin@example.com}"
+      DEFAULT_COLOR_SCHEME: "${DEFAULT_COLOR_SCHEME:-mediafusion}"
+      SECRET_KEY: "${SECRET_KEY:?set-a-32-char-hex-secret}"
+      API_PASSWORD: "${API_PASSWORD:?set-an-api-password}"
+      POSTGRES_URI: "postgresql://${POSTGRES_USER:-mediafusion}:${POSTGRES_PASSWORD:?set-a-postgres-password}@postgres:5432/${POSTGRES_DB:-mediafusion}"
+      REDIS_URL: "redis://:${REDIS_PASSWORD:?set-a-redis-password}@redis:6379"
+      ENABLE_RATE_LIMIT: "${ENABLE_RATE_LIMIT:-false}"
+      BROWSERLESS_URL: "http://browserless:3000"
+      SCRAPLING_CDP_URL: "ws://browserless:3000"
+      BYPARR_URL: "http://byparr:8191"
+      TASKIQ_SINGLE_WORKER_MODE: "${TASKIQ_SINGLE_WORKER_MODE:-true}"
+      PUBLIC_INDEXERS_LIVE_SEARCH_ENABLE_CLOUDFLARE_SOLVER: "${PUBLIC_INDEXERS_LIVE_SEARCH_ENABLE_CLOUDFLARE_SOLVER:-false}"
+      PROWLARR_URL: "${PROWLARR_URL:-}"
+      PROWLARR_API_KEY: "${PROWLARR_API_KEY:-}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      browserless:
+        condition: service_started
+      byparr:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  mediafusion-worker:
+    image: "${MEDIAFUSION_IMAGE:-mhdzumair/mediafusion:6.0.0-beta.12}"
+    command: ["/usr/local/bin/mediafusion-worker"]
+    environment:
+      HOST_URL: "${HOST_URL:?https://mediafusion.example.com}"
+      POSTER_HOST_URL: "${POSTER_HOST_URL:-https://mediafusion.example.com}"
+      CONTACT_EMAIL: "${CONTACT_EMAIL:-admin@example.com}"
+      DEFAULT_COLOR_SCHEME: "${DEFAULT_COLOR_SCHEME:-mediafusion}"
+      SECRET_KEY: "${SECRET_KEY:?set-a-32-char-hex-secret}"
+      API_PASSWORD: "${API_PASSWORD:?set-an-api-password}"
+      POSTGRES_URI: "postgresql://${POSTGRES_USER:-mediafusion}:${POSTGRES_PASSWORD:?set-a-postgres-password}@postgres:5432/${POSTGRES_DB:-mediafusion}"
+      REDIS_URL: "redis://:${REDIS_PASSWORD:?set-a-redis-password}@redis:6379"
+      BROWSERLESS_URL: "http://browserless:3000"
+      SCRAPLING_CDP_URL: "ws://browserless:3000"
+      BYPARR_URL: "http://byparr:8191"
+      TASKIQ_SINGLE_WORKER_MODE: "${TASKIQ_SINGLE_WORKER_MODE:-true}"
+      PUBLIC_INDEXERS_LIVE_SEARCH_ENABLE_CLOUDFLARE_SOLVER: "${PUBLIC_INDEXERS_LIVE_SEARCH_ENABLE_CLOUDFLARE_SOLVER:-false}"
+      PROWLARR_URL: "${PROWLARR_URL:-}"
+      PROWLARR_API_KEY: "${PROWLARR_API_KEY:-}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      browserless:
+        condition: service_started
+      byparr:
+        condition: service_started
+    restart: unless-stopped
+
+  postgres:
+    image: "postgres:18-alpine"
+    shm_size: 512mb
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:-mediafusion}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set-a-postgres-password}"
+      POSTGRES_DB: "${POSTGRES_DB:-mediafusion}"
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "effective_cache_size=768MB"
+      - "-c"
+      - "maintenance_work_mem=128MB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "wal_buffers=16MB"
+      - "-c"
+      - "default_statistics_target=100"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_io_concurrency=200"
+      - "-c"
+      - "work_mem=16MB"
+      - "-c"
+      - "huge_pages=off"
+      - "-c"
+      - "min_wal_size=1GB"
+      - "-c"
+      - "max_wal_size=4GB"
+      - "-c"
+      - "max_worker_processes=4"
+      - "-c"
+      - "max_parallel_workers_per_gather=2"
+      - "-c"
+      - "max_parallel_workers=4"
+      - "-c"
+      - "max_parallel_maintenance_workers=2"
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements"
+      - "-c"
+      - "pg_stat_statements.track=all"
+      - "-c"
+      - "pg_stat_statements.max=10000"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mediafusion} -d ${POSTGRES_DB:-mediafusion}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  redis:
+    image: "redis:7-alpine"
+    command: >
+      sh -c "redis-server --appendonly yes --save 60 1
+      --maxmemory-policy allkeys-lru
+      --requirepass \"$${REDIS_PASSWORD}\""
+    environment:
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?set-a-redis-password}"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" --raw INFO | grep -q '^loading:0$'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  browserless:
+    image: "ghcr.io/browserless/chromium:latest"
+    environment:
+      CONCURRENT: "${BROWSERLESS_CONCURRENT:-4}"
+      TIMEOUT: "${BROWSERLESS_TIMEOUT:-120000}"
+      ENABLE_CORS: "true"
+    restart: unless-stopped
+
+  byparr:
+    image: "ghcr.io/thephaseless/byparr:latest"
+    environment:
+      LOG_LEVEL: "${BYPARR_LOG_LEVEL:-info}"
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:
